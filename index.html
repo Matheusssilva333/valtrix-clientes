@@ -4497,7 +4497,7 @@
         const usersData = devs.map(d => ({ ...d, realName: d.user }));
 
         const ids = usersData.map(u => u.id).join(',');
-        const rt = await fetch(PROXY + encodeURIComponent(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${ids}&size=150x150&format=Png&isCircular=true`));
+        const rt = await proxyFetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${ids}&size=150x150&format=Png&isCircular=true`);
         const dt = await rt.json();
         const thumbs = dt.data || [];
 
@@ -5075,6 +5075,37 @@
     }
 
     // ── LOGIN FLOW ─────────────────────────────────────────
+    // ── ROBUST FETCH SYSTEM ───────────────────────────────
+    async function proxyFetch(url, options = {}) {
+      const targets = [
+        { type: 'local', url: PROXY + encodeURIComponent(url) },
+        { type: 'allorigins', url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}` },
+        { type: 'corsproxy', url: `https://corsproxy.io/?${encodeURIComponent(url)}` }
+      ];
+
+      for (const target of targets) {
+        try {
+          // AllOrigins only supports GET and returns data in .contents
+          if (target.type === 'allorigins') {
+            if (options.method && options.method !== 'GET') continue;
+            const res = await fetch(target.url);
+            if (res.ok) {
+              const data = await res.json();
+              return { ok: true, json: async () => JSON.parse(data.contents) };
+            }
+            continue;
+          }
+
+          const res = await fetch(target.url, options);
+          if (res.ok) return res;
+        } catch (e) {
+          console.warn(`[proxyFetch] ${target.type} failed for ${url}:`, e.message);
+        }
+      }
+      throw new Error(`Failed to fetch ${url} after all attempts.`);
+    }
+
+    // ── LOGIN FLOW ─────────────────────────────────────────
     let robloxUser = null;
 
     async function loSearch() {
@@ -5092,108 +5123,53 @@
       try {
         let uid = null, uname = null, displayName = null;
 
-        // Função auxiliar para tentar fetch com fallback de proxy
-        async function smartFetch(url, options = {}) {
-          console.log('[smartFetch] Tentando:', url);
-          
-          // 1. Tenta via proxy local
-          try {
-            const res = await fetch(PROXY + encodeURIComponent(url), options);
-            if (res.ok) return res;
-            console.warn('[smartFetch] Proxy local retornou status:', res.status);
-          } catch (e) { console.warn('[smartFetch] Erro no Proxy local:', e.message); }
-
-          // 2. Fallback para AllOrigins (Geralmente mais estável que corsproxy)
-          try {
-            const allOrigins = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-            // AllOrigins retorna o JSON dentro de uma propriedade 'contents' para GET
-            if (!options.method || options.method === 'GET') {
-              const res = await fetch(allOrigins);
-              if (res.ok) {
-                const data = await res.json();
-                return { ok: true, json: () => JSON.parse(data.contents) };
-              }
-            }
-          } catch (e) { console.warn('[smartFetch] AllOrigins falhou:', e.message); }
-
-          // 3. Fallback para Corsproxy.io
-          try {
-            const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(url), options);
-            if (res.ok) return res;
-          } catch (e) { console.warn('[smartFetch] Corsproxy.io falhou:', e.message); }
-          
-          return null;
-        }
-
-        // --- ESTRATÉGIA 1: API de Usernames (Oficial/POST) ---
+        // Estratégia 1: API de Usernames (Oficial)
         try {
-          const r0 = await smartFetch('https://users.roblox.com/v1/usernames/users', {
+          const r0 = await proxyFetch('https://users.roblox.com/v1/usernames/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ usernames: [username], excludeBannedUsers: false })
           });
-          if (r0) {
-            const d0 = await r0.json();
-            if (d0.data?.length > 0) {
-              uid = d0.data[0].id;
-              uname = d0.data[0].name;
-              displayName = d0.data[0].displayName || uname;
-              console.log('[loSearch] Sucesso na Estratégia 1');
-            }
+          const d0 = await r0.json();
+          if (d0.data?.length > 0) {
+            uid = d0.data[0].id;
+            uname = d0.data[0].name;
+            displayName = d0.data[0].displayName || uname;
           }
-        } catch (e) { console.error('[loSearch] Erro na Estratégia 1:', e); }
+        } catch (e) { console.warn('[loSearch] Estratégia 1 falhou'); }
 
-        // --- ESTRATÉGIA 2: API Mobile (Legada mas estável/GET) ---
+        // Estratégia 2: API Mobile (Fallback Estável)
         if (!uid) {
           try {
-            const r1 = await smartFetch(`https://www.roblox.com/mobileapi/userinfo?username=${encodeURIComponent(username)}`);
-            if (r1) {
-              const d1 = await r1.json();
-              if (d1.Id && d1.Username) {
-                uid = d1.Id;
-                uname = d1.Username;
-                displayName = d1.Username;
-                console.log('[loSearch] Sucesso na Estratégia 2');
-              }
-            }
-          } catch (e) { console.error('[loSearch] Erro na Estratégia 2:', e); }
+            const r1 = await proxyFetch(`https://www.roblox.com/mobileapi/userinfo?username=${encodeURIComponent(username)}`);
+            const d1 = await r1.json();
+            if (d1.Id) { uid = d1.Id; uname = d1.Username; displayName = d1.Username; }
+          } catch (e) { console.warn('[loSearch] Estratégia 2 falhou'); }
         }
 
-        // --- ESTRATÉGIA 3: API de Busca (Keyword) ---
+        // Estratégia 3: Search (Fallback Final)
         if (!uid) {
           try {
-            const r2 = await smartFetch(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`);
-            if (r2) {
-              const d2 = await r2.json();
-              const found = d2.data?.find(u => 
-                u.name.toLowerCase() === username.toLowerCase() || 
-                u.displayName.toLowerCase() === username.toLowerCase()
-              );
-              if (found) {
-                uid = found.id;
-                uname = found.name;
-                displayName = found.displayName || uname;
-                console.log('[loSearch] Sucesso na Estratégia 3');
-              }
-            }
-          } catch (e) { console.error('[loSearch] Erro na Estratégia 3:', e); }
+            const r2 = await proxyFetch(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`);
+            const d2 = await r2.json();
+            const found = d2.data?.find(u => u.name.toLowerCase() === username.toLowerCase() || u.displayName.toLowerCase() === username.toLowerCase());
+            if (found) { uid = found.id; uname = found.name; displayName = found.displayName || uname; }
+          } catch (e) { console.warn('[loSearch] Estratégia 3 falhou'); }
         }
 
-        if (!uid) { 
-          console.error('[loSearch] Falha total em todas as APIs para:', username);
-          showLoError('Usuário não encontrado. Verifique o nome exato e tente novamente.'); 
-          inp.classList.add('error'); 
-          return; 
+        if (!uid) {
+          showLoError('Usuário não encontrado. Verifique o nome exato.');
+          inp.classList.add('error');
+          return;
         }
 
-        // Busca avatar headshot
+        // Busca avatar
         let avatarUrl = '';
         try {
-          const ra = await fetch(PROXY + encodeURIComponent(
-            `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${uid}&size=180x180&format=Png&isCircular=false`
-          ));
-          if (ra.ok) { const da = await ra.json(); avatarUrl = da.data?.[0]?.imageUrl || ''; }
-        } catch (e) { /* avatar opcional */ }
+          const ra = await proxyFetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${uid}&size=180x180&format=Png&isCircular=false`);
+          const da = await ra.json();
+          avatarUrl = da.data?.[0]?.imageUrl || '';
+        } catch (e) { console.warn('[loSearch] Avatar falhou'); }
 
         robloxUser = { uid, username: uname, displayName, avatarUrl };
 
@@ -5206,7 +5182,7 @@
         document.getElementById('loStep2').classList.remove('hidden');
 
       } catch (e) {
-        showLoError('Erro de conexão. Tente novamente.');
+        showLoError('Erro de conexão. Verifique sua internet.');
         console.error('[loSearch]', e);
       } finally {
         btn.classList.remove('loading'); btn.disabled = false;
@@ -5381,9 +5357,7 @@
     // ── Fetch group icon ─────────────────────────────────────
     async function fetchGroupIcon(gid) {
       try {
-        const res = await fetch(PROXY + encodeURIComponent(
-          `https://thumbnails.roblox.com/v1/groups/icons?groupIds=${gid}&size=150x150&format=Png`
-        ));
+        const res = await proxyFetch(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${gid}&size=150x150&format=Png`);
         const data = await res.json();
         return data.data?.[0]?.imageUrl || null;
       } catch (e) { console.warn('fetchGroupIcon error', e); return null; }
@@ -5399,7 +5373,7 @@
         do {
           // search/items/details retorna nome+preço+thumb em GET — sem Category pega todos os tipos
           const url = `https://catalog.roblox.com/v1/search/items/details?CreatorTargetId=${gid}&CreatorType=2&Limit=30&SortType=0${cursor ? '&Cursor=' + encodeURIComponent(cursor) : ''}`;
-          const res = await fetch(PROXY + encodeURIComponent(url));
+          const res = await proxyFetch(url);
           if (!res.ok) { console.warn('[fetch] status', res.status); break; }
           const data = await res.json();
           console.log('[fetch] grupo', gid, 'batch:', data.data?.length, '| ex:', data.data?.[0]);
@@ -5427,9 +5401,7 @@
             const batch = semThumb.slice(s, s + TBATCH);
             const ids = batch.map(i => i.id).join(',');
             try {
-              const tr = await fetch(PROXY + encodeURIComponent(
-                `https://thumbnails.roblox.com/v1/assets?assetIds=${ids}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false`
-              ));
+              const tr = await proxyFetch(`https://thumbnails.roblox.com/v1/assets?assetIds=${ids}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false`);
               if (tr.ok) {
                 const td = await tr.json();
                 const thumbMap = {};
