@@ -111,17 +111,35 @@ app.post('/api/affiliate', async (req, res) => {
 });
 
 // Proxy Route for Roblox APIs (to avoid CORS and Supabase dependency locally)
-app.get('/api/proxy', async (req, res) => {
+app.all('/api/proxy', async (req, res) => {
     try {
         const targetUrl = req.query.url;
         if (!targetUrl) return res.status(400).json({ error: 'Missing url parameter' });
 
-        const response = await fetch(targetUrl);
+        const options = {
+            method: req.method,
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        };
+
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+            options.body = JSON.stringify(req.body);
+        }
+
+        const response = await fetch(targetUrl, options);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`Roblox API error (${response.status}):`, errorText);
+            return res.status(response.status).json({ error: 'Roblox API returned an error', details: errorText });
+        }
+
         const data = await response.json();
         res.json(data);
     } catch (error) {
         console.error('Proxy error:', error);
-        res.status(500).json({ error: 'Failed to fetch from Roblox API' });
+        res.status(500).json({ error: 'Failed to fetch from Roblox API', message: error.message });
     }
 });
 

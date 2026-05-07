@@ -5092,42 +5092,51 @@
       try {
         let uid = null, uname = null, displayName = null;
 
-        // Estratégia 1: busca por keyword (GET — compatível com corsproxy.io)
-        const r1 = await fetch(
-          PROXY + encodeURIComponent(
-            `https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`
-          )
-        );
-        if (r1.ok) {
-          const d1 = await r1.json();
-          const user = d1.data?.find(u => u.name.toLowerCase() === username.toLowerCase());
-          if (user) { uid = user.id; uname = user.name; displayName = user.displayName || uname; }
-        }
+        // Estratégia 1: Busca Direta por Username (POST — mais confiável)
+        try {
+          const r0 = await fetch(PROXY + encodeURIComponent('https://users.roblox.com/v1/usernames/users'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ usernames: [username], excludeBannedUsers: true })
+          });
+          
+          if (r0.ok) {
+            const d0 = await r0.json();
+            if (d0.data && d0.data.length > 0) {
+              const user = d0.data[0];
+              uid = user.id;
+              uname = user.name;
+              displayName = user.displayName || uname;
+              console.log('[loSearch] Usuário encontrado via API direta:', uname, uid);
+            }
+          }
+        } catch (e) { console.warn('[loSearch] Estratégia 1 falhou:', e); }
 
-        // Estratégia 2 (fallback): API legada get-by-username (GET)
+        // Estratégia 2: Busca por Keyword (Fallback)
         if (!uid) {
-          const r2 = await fetch(
+          const r1 = await fetch(
             PROXY + encodeURIComponent(
-              `https://api.roblox.com/users/get-by-username?username=${encodeURIComponent(username)}`
+              `https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`
             )
           );
-          if (r2.ok) {
-            const d2 = await r2.json();
-            if (d2.Id && !d2.errorMessage) {
-              uid = d2.Id; uname = d2.Username || username; displayName = d2.Username || username;
+          if (r1.ok) {
+            const d1 = await r1.json();
+            const user = d1.data?.find(u => u.name.toLowerCase() === username.toLowerCase());
+            if (user) { 
+              uid = user.id; 
+              uname = user.name; 
+              displayName = user.displayName || uname; 
+              console.log('[loSearch] Usuário encontrado via Search:', uname, uid);
             }
           }
         }
 
-        // Estratégia 3: busca displayName real via /v1/users/{id}
-        if (uid && (!displayName || displayName === uname)) {
-          try {
-            const r3 = await fetch(PROXY + encodeURIComponent(`https://users.roblox.com/v1/users/${uid}`));
-            if (r3.ok) { const d3 = await r3.json(); displayName = d3.displayName || uname; uname = d3.name || uname; }
-          } catch (e) { /* ignora */ }
+        if (!uid) { 
+          console.warn('[loSearch] Usuário não encontrado em nenhuma estratégia.');
+          showLoError('Usuário não encontrado. Verifique o nome exato.'); 
+          inp.classList.add('error'); 
+          return; 
         }
-
-        if (!uid) { showLoError('Usuário não encontrado. Verifique o nome exato.'); inp.classList.add('error'); return; }
 
         // Busca avatar headshot
         let avatarUrl = '';
