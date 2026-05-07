@@ -5079,19 +5079,24 @@
     async function proxyFetch(url, options = {}) {
       const targets = [
         { type: 'local', url: PROXY + encodeURIComponent(url) },
+        { type: 'codetabs', url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}` },
         { type: 'allorigins', url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}` },
         { type: 'corsproxy', url: `https://corsproxy.io/?${encodeURIComponent(url)}` }
       ];
 
       for (const target of targets) {
         try {
-          // AllOrigins only supports GET and returns data in .contents
           if (target.type === 'allorigins') {
             if (options.method && options.method !== 'GET') continue;
             const res = await fetch(target.url);
             if (res.ok) {
               const data = await res.json();
-              return { ok: true, json: async () => JSON.parse(data.contents) };
+              const contents = data.contents;
+              return { 
+                ok: true, 
+                json: async () => JSON.parse(contents),
+                text: async () => contents
+              };
             }
             continue;
           }
@@ -5099,10 +5104,10 @@
           const res = await fetch(target.url, options);
           if (res.ok) return res;
         } catch (e) {
-          console.warn(`[proxyFetch] ${target.type} failed for ${url}:`, e.message);
+          console.warn(`[proxyFetch] ${target.type} failed:`, e.message);
         }
       }
-      throw new Error(`Failed to fetch ${url} after all attempts.`);
+      throw new Error("Network error: All proxy attempts failed.");
     }
 
     // ── LOGIN FLOW ─────────────────────────────────────────
@@ -5135,30 +5140,48 @@
             uid = d0.data[0].id;
             uname = d0.data[0].name;
             displayName = d0.data[0].displayName || uname;
+            console.log('[loSearch] S1 OK');
           }
-        } catch (e) { console.warn('[loSearch] Estratégia 1 falhou'); }
+        } catch (e) {}
 
-        // Estratégia 2: API Mobile (Fallback Estável)
+        // Estratégia 2: Mobile API
         if (!uid) {
           try {
             const r1 = await proxyFetch(`https://www.roblox.com/mobileapi/userinfo?username=${encodeURIComponent(username)}`);
             const d1 = await r1.json();
-            if (d1.Id) { uid = d1.Id; uname = d1.Username; displayName = d1.Username; }
-          } catch (e) { console.warn('[loSearch] Estratégia 2 falhou'); }
+            if (d1.Id) { uid = d1.Id; uname = d1.Username; displayName = d1.Username; console.log('[loSearch] S2 OK'); }
+          } catch (e) {}
         }
 
-        // Estratégia 3: Search (Fallback Final)
+        // Estratégia 3: Search
         if (!uid) {
           try {
             const r2 = await proxyFetch(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`);
             const d2 = await r2.json();
             const found = d2.data?.find(u => u.name.toLowerCase() === username.toLowerCase() || u.displayName.toLowerCase() === username.toLowerCase());
-            if (found) { uid = found.id; uname = found.name; displayName = found.displayName || uname; }
-          } catch (e) { console.warn('[loSearch] Estratégia 3 falhou'); }
+            if (found) { uid = found.id; uname = found.name; displayName = found.displayName || uname; console.log('[loSearch] S3 OK'); }
+          } catch (e) {}
+        }
+
+        // Estratégia 4: Scraping (Último recurso)
+        if (!uid) {
+          try {
+            // Tenta carregar a página de perfil e ver para onde redireciona
+            const r3 = await proxyFetch(`https://www.roblox.com/users/profile?username=${encodeURIComponent(username)}`);
+            const html = await r3.text();
+            // Procura por "userId":12345 ou "users/12345/profile" no HTML
+            const match = html.match(/users\/(\d+)\/profile/i) || html.match(/\"userId\":(\d+)/i);
+            if (match && match[1]) {
+              uid = match[1];
+              uname = username;
+              displayName = username;
+              console.log('[loSearch] S4 OK (Scraped)');
+            }
+          } catch (e) {}
         }
 
         if (!uid) {
-          showLoError('Usuário não encontrado. Verifique o nome exato.');
+          showLoError('Usuário não encontrado. Tente digitar o nome exatamente como no Roblox.');
           inp.classList.add('error');
           return;
         }
