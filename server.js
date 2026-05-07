@@ -4,6 +4,8 @@ const bodyParser = require('body-parser');
 const fs = require('fs-extra');
 const path = require('path');
 const https = require('https');
+const http = require('http');
+const { URL } = require('url');
 
 const app = express();
 const PORT = 3000;
@@ -147,7 +149,7 @@ app.all('/api/proxy', async (req, res) => {
                 options.headers['Content-Length'] = Buffer.byteLength(bodyData);
             }
 
-            const client = parsedUrl.protocol === 'https:' ? https : require('http');
+            const client = parsedUrl.protocol === 'https:' ? https : http;
             const proxyReq = client.request(options, (proxyRes) => {
                 // Handle Redirects
                 if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
