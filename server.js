@@ -111,47 +111,43 @@ app.post('/api/affiliate', async (req, res) => {
 });
 
 // Proxy Route for Roblox APIs (to avoid CORS and Supabase dependency locally)
-app.all('/api/proxy', async (req, res) => {
-    try {
-        const targetUrl = req.query.url;
-        if (!targetUrl) return res.status(400).json({ error: 'Missing url parameter' });
+app.all('/api/proxy', (req, res) => {
+    const targetUrl = req.query.url;
+    if (!targetUrl) return res.status(400).json({ error: 'Missing url parameter' });
 
+    try {
+        const url = new URL(targetUrl);
         const options = {
+            hostname: url.hostname,
+            path: url.pathname + url.search,
             method: req.method,
             headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
             }
         };
 
-        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body && Object.keys(req.body).length > 0) {
-            options.body = JSON.stringify(req.body);
-        }
-
-        const response = await fetch(targetUrl, options);
-        const contentType = response.headers.get('content-type');
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`[Proxy] Roblox API Error: ${response.status} ${targetUrl}`, errorText);
-            return res.status(response.status).json({ 
-                error: 'Roblox API Error', 
-                status: response.status,
-                details: errorText 
+        const proxyReq = https.request(options, (proxyRes) => {
+            let data = '';
+            proxyRes.on('data', (chunk) => { data += chunk; });
+            proxyRes.on('end', () => {
+                res.status(proxyRes.statusCode).set('Content-Type', 'application/json').send(data);
             });
-        }
+        });
 
-        if (contentType && contentType.includes('application/json')) {
-            const data = await response.json();
-            res.json(data);
-        } else {
-            const text = await response.text();
-            res.send(text);
+        proxyReq.on('error', (err) => {
+            console.error('[Proxy Error]', err.message);
+            res.status(500).json({ error: 'Proxy Request Failed', message: err.message });
+        });
+
+        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+            proxyReq.write(JSON.stringify(req.body));
         }
-    } catch (error) {
-        console.error('[Proxy] Critical Error:', error.message);
-        res.status(500).json({ error: 'Proxy Failure', message: error.message });
+        proxyReq.end();
+    } catch (err) {
+        console.error('[Proxy Critical]', err.message);
+        res.status(500).json({ error: 'Invalid URL or Proxy Error' });
     }
 });
 

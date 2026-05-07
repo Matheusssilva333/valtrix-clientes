@@ -5094,18 +5094,33 @@
 
         // Função auxiliar para tentar fetch com fallback de proxy
         async function smartFetch(url, options = {}) {
-          // Tenta via proxy local primeiro
+          console.log('[smartFetch] Tentando:', url);
+          
+          // 1. Tenta via proxy local
           try {
             const res = await fetch(PROXY + encodeURIComponent(url), options);
             if (res.ok) return res;
-          } catch (e) { console.warn('[smartFetch] Proxy local falhou:', url); }
+            console.warn('[smartFetch] Proxy local retornou status:', res.status);
+          } catch (e) { console.warn('[smartFetch] Erro no Proxy local:', e.message); }
 
-          // Fallback para proxy público se o local falhar ou der erro
+          // 2. Fallback para AllOrigins (Geralmente mais estável que corsproxy)
           try {
-            const publicProxy = 'https://corsproxy.io/?';
-            const res = await fetch(publicProxy + encodeURIComponent(url), options);
+            const allOrigins = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+            // AllOrigins retorna o JSON dentro de uma propriedade 'contents' para GET
+            if (!options.method || options.method === 'GET') {
+              const res = await fetch(allOrigins);
+              if (res.ok) {
+                const data = await res.json();
+                return { ok: true, json: () => JSON.parse(data.contents) };
+              }
+            }
+          } catch (e) { console.warn('[smartFetch] AllOrigins falhou:', e.message); }
+
+          // 3. Fallback para Corsproxy.io
+          try {
+            const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(url), options);
             if (res.ok) return res;
-          } catch (e) { console.warn('[smartFetch] Proxy público falhou:', url); }
+          } catch (e) { console.warn('[smartFetch] Corsproxy.io falhou:', e.message); }
           
           return null;
         }
@@ -5123,10 +5138,10 @@
               uid = d0.data[0].id;
               uname = d0.data[0].name;
               displayName = d0.data[0].displayName || uname;
-              console.log('[loSearch] Encontrado via Estratégia 1');
+              console.log('[loSearch] Sucesso na Estratégia 1');
             }
           }
-        } catch (e) {}
+        } catch (e) { console.error('[loSearch] Erro na Estratégia 1:', e); }
 
         // --- ESTRATÉGIA 2: API Mobile (Legada mas estável/GET) ---
         if (!uid) {
@@ -5137,28 +5152,31 @@
               if (d1.Id && d1.Username) {
                 uid = d1.Id;
                 uname = d1.Username;
-                displayName = d1.Username; // Mobile API não costuma dar displayName
-                console.log('[loSearch] Encontrado via Estratégia 2');
+                displayName = d1.Username;
+                console.log('[loSearch] Sucesso na Estratégia 2');
               }
             }
-          } catch (e) {}
+          } catch (e) { console.error('[loSearch] Erro na Estratégia 2:', e); }
         }
 
-        // --- ESTRATÉGIA 3: API de Busca (Fallback Final) ---
+        // --- ESTRATÉGIA 3: API de Busca (Keyword) ---
         if (!uid) {
           try {
-            const r2 = await smartFetch(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=5`);
+            const r2 = await smartFetch(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`);
             if (r2) {
               const d2 = await r2.json();
-              const found = d2.data?.find(u => u.name.toLowerCase() === username.toLowerCase());
+              const found = d2.data?.find(u => 
+                u.name.toLowerCase() === username.toLowerCase() || 
+                u.displayName.toLowerCase() === username.toLowerCase()
+              );
               if (found) {
                 uid = found.id;
                 uname = found.name;
                 displayName = found.displayName || uname;
-                console.log('[loSearch] Encontrado via Estratégia 3');
+                console.log('[loSearch] Sucesso na Estratégia 3');
               }
             }
-          } catch (e) {}
+          } catch (e) { console.error('[loSearch] Erro na Estratégia 3:', e); }
         }
 
         if (!uid) { 
