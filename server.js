@@ -119,27 +119,39 @@ app.all('/api/proxy', async (req, res) => {
         const options = {
             method: req.method,
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json'
             }
         };
 
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
+        if (req.method !== 'GET' && req.method !== 'HEAD' && req.body && Object.keys(req.body).length > 0) {
             options.body = JSON.stringify(req.body);
         }
 
         const response = await fetch(targetUrl, options);
+        const contentType = response.headers.get('content-type');
         
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Roblox API error (${response.status}):`, errorText);
-            return res.status(response.status).json({ error: 'Roblox API returned an error', details: errorText });
+            console.error(`[Proxy] Roblox API Error: ${response.status} ${targetUrl}`, errorText);
+            return res.status(response.status).json({ 
+                error: 'Roblox API Error', 
+                status: response.status,
+                details: errorText 
+            });
         }
 
-        const data = await response.json();
-        res.json(data);
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            res.json(data);
+        } else {
+            const text = await response.text();
+            res.send(text);
+        }
     } catch (error) {
-        console.error('Proxy error:', error);
-        res.status(500).json({ error: 'Failed to fetch from Roblox API', message: error.message });
+        console.error('[Proxy] Critical Error:', error.message);
+        res.status(500).json({ error: 'Proxy Failure', message: error.message });
     }
 });
 

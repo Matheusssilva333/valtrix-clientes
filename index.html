@@ -5092,48 +5092,78 @@
       try {
         let uid = null, uname = null, displayName = null;
 
-        // Estratégia 1: Busca Direta por Username (POST — mais confiável)
+        // Função auxiliar para tentar fetch com fallback de proxy
+        async function smartFetch(url, options = {}) {
+          // Tenta via proxy local primeiro
+          try {
+            const res = await fetch(PROXY + encodeURIComponent(url), options);
+            if (res.ok) return res;
+          } catch (e) { console.warn('[smartFetch] Proxy local falhou:', url); }
+
+          // Fallback para proxy público se o local falhar ou der erro
+          try {
+            const publicProxy = 'https://corsproxy.io/?';
+            const res = await fetch(publicProxy + encodeURIComponent(url), options);
+            if (res.ok) return res;
+          } catch (e) { console.warn('[smartFetch] Proxy público falhou:', url); }
+          
+          return null;
+        }
+
+        // --- ESTRATÉGIA 1: API de Usernames (Oficial/POST) ---
         try {
-          const r0 = await fetch(PROXY + encodeURIComponent('https://users.roblox.com/v1/usernames/users'), {
+          const r0 = await smartFetch('https://users.roblox.com/v1/usernames/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ usernames: [username], excludeBannedUsers: true })
+            body: JSON.stringify({ usernames: [username], excludeBannedUsers: false })
           });
-          
-          if (r0.ok) {
+          if (r0) {
             const d0 = await r0.json();
-            if (d0.data && d0.data.length > 0) {
-              const user = d0.data[0];
-              uid = user.id;
-              uname = user.name;
-              displayName = user.displayName || uname;
-              console.log('[loSearch] Usuário encontrado via API direta:', uname, uid);
+            if (d0.data?.length > 0) {
+              uid = d0.data[0].id;
+              uname = d0.data[0].name;
+              displayName = d0.data[0].displayName || uname;
+              console.log('[loSearch] Encontrado via Estratégia 1');
             }
           }
-        } catch (e) { console.warn('[loSearch] Estratégia 1 falhou:', e); }
+        } catch (e) {}
 
-        // Estratégia 2: Busca por Keyword (Fallback)
+        // --- ESTRATÉGIA 2: API Mobile (Legada mas estável/GET) ---
         if (!uid) {
-          const r1 = await fetch(
-            PROXY + encodeURIComponent(
-              `https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=10`
-            )
-          );
-          if (r1.ok) {
-            const d1 = await r1.json();
-            const user = d1.data?.find(u => u.name.toLowerCase() === username.toLowerCase());
-            if (user) { 
-              uid = user.id; 
-              uname = user.name; 
-              displayName = user.displayName || uname; 
-              console.log('[loSearch] Usuário encontrado via Search:', uname, uid);
+          try {
+            const r1 = await smartFetch(`https://www.roblox.com/mobileapi/userinfo?username=${encodeURIComponent(username)}`);
+            if (r1) {
+              const d1 = await r1.json();
+              if (d1.Id && d1.Username) {
+                uid = d1.Id;
+                uname = d1.Username;
+                displayName = d1.Username; // Mobile API não costuma dar displayName
+                console.log('[loSearch] Encontrado via Estratégia 2');
+              }
             }
-          }
+          } catch (e) {}
+        }
+
+        // --- ESTRATÉGIA 3: API de Busca (Fallback Final) ---
+        if (!uid) {
+          try {
+            const r2 = await smartFetch(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(username)}&limit=5`);
+            if (r2) {
+              const d2 = await r2.json();
+              const found = d2.data?.find(u => u.name.toLowerCase() === username.toLowerCase());
+              if (found) {
+                uid = found.id;
+                uname = found.name;
+                displayName = found.displayName || uname;
+                console.log('[loSearch] Encontrado via Estratégia 3');
+              }
+            }
+          } catch (e) {}
         }
 
         if (!uid) { 
-          console.warn('[loSearch] Usuário não encontrado em nenhuma estratégia.');
-          showLoError('Usuário não encontrado. Verifique o nome exato.'); 
+          console.error('[loSearch] Falha total em todas as APIs para:', username);
+          showLoError('Usuário não encontrado. Verifique o nome exato e tente novamente.'); 
           inp.classList.add('error'); 
           return; 
         }
